@@ -1,0 +1,16 @@
+# 核心框架
+langchain
+langchain-openai
+langgraph
+
+# 金融数据与分析
+akshare
+pandas
+pandas-ta
+
+# 环境与网络工具
+python-dotenv
+httpx
+
+# 如果你使用的是比较新的 Python，建议加上这个以保证网络稳定
+urllib3>=2.0.0

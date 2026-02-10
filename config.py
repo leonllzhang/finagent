@@ -13,6 +13,6 @@ class Config:
     
     # 监控配置
     # 510300(沪深300ETF), 513100(纳指ETF), 159941(恒生科技ETF)
-    MONITOR_SYMBOLS = ["510300.SH", "510880.SH", "159941.SZ"] 
+    MONITOR_SYMBOLS = ["510300", "510880", "159941"] 
     INTERVAL_SECONDS = 300  # 5分钟轮询一次
     K_LINE_PERIOD = 5       # 使用5分钟K线

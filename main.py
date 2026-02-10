@@ -4,39 +4,44 @@ from datetime import datetime
 from graph import create_graph
 from config import Config
 
+# 彻底清理环境变量中的代理设置
+for key in list(os.environ.keys()):
+    if 'proxy' in key.lower():
+        del os.environ[key]
+
+# 强制直连
+os.environ['NO_PROXY'] = '*'
+
 def run_monitor():
-    # 强制禁用代理，确保直连 Tushare 和 Qwen (如果 Qwen 在国内不需要代理)
+    # 强制禁用代理
     os.environ['no_proxy'] = '*'
     
     agent = create_graph()
-    print(f"🚀 基于 Tushare 的 ETF 5分钟级雷达启动...")
-    print(f"📡 监控列表: {Config.MONITOR_SYMBOLS}")
+    print(f"🚀 ETF 5分钟短线监控系统已启动...")
+    print(f"📡 监控列表: {Config.MONITOR_SYMBOLS} | 频率: {Config.INTERVAL_SECONDS}s")
     print("="*60)
 
     while True:
+        # 只在交易时间运行 (可选)
         now = datetime.now()
-        # 简单的交易时间过滤 (A股交易时间)
-        if not (9 <= now.hour <= 15):
-            print(f"[{now.strftime('%H:%M:%S')}] 非交易时间，休眠中...")
-            time.sleep(600)
-            continue
+        # if not (9 <= now.hour <= 15): 
+        #    time.sleep(60); continue
 
         for symbol in Config.MONITOR_SYMBOLS:
             try:
-                # 运行 Agent 分析
+                # 执行 Agent
                 result = agent.invoke({"symbol": symbol})
                 
+                # 输出分析报告
                 print(f"\n【{datetime.now().strftime('%H:%M:%S')} 信号推送: {symbol}】")
                 print(result['analysis'])
                 print("-" * 40)
-                
-                # Tushare 频率控制：每只分析完稍作停顿
-                time.sleep(2) 
+
                 
             except Exception as e:
-                print(f"❌ 监控 {symbol} 失败: {e}")
+                print(f"❌ 监控 {symbol} 时发生异常: {e}")
         
-        print(f"\n下轮轮询将在 {Config.INTERVAL_SECONDS//60} 分钟后开始...")
+        print(f"\n休眠中... 下轮分析将在 {Config.INTERVAL_SECONDS//60} 分钟后开始")
         time.sleep(Config.INTERVAL_SECONDS)
 
 if __name__ == "__main__":

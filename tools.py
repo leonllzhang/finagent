@@ -4,7 +4,10 @@ import pandas_ta as ta
 import os
 from datetime import datetime
 
-os.environ['no_proxy'] = '*'
+# 额外强制设置为空
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+os.environ['all_proxy'] = ''
 
 def fetch_etf_metrics(symbol: str):
     try:

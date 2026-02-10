@@ -65,5 +65,7 @@ def analysis_node(state: AgentState):
     请用专业且富有逻辑的语言输出，确保概率总和为100%。
     """
     
+
+    print(f"\nprompt now: {prompt} \n")
     response = llm.invoke(prompt)
     return {"analysis": response.content}

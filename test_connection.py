@@ -88,7 +88,7 @@ def test_interfaces():
     
     try:
         # 测试efinance 接口
-        df = ef.stock.get_quote_history('510300')
+        df = ef.stock.get_quote_history('510300', klt=5)
         print(df)
         print(f"✅ ETF 接口成功，数据量: {len(df)}")
     except Exception as e:
@@ -100,4 +100,4 @@ if __name__ == "__main__":
     test_system()
     test_interfaces()
     # 获取 510300 的实时价格
-    print(f"测试efinance接口")
+    # print(f"测试efinance接口")

@@ -16,3 +16,10 @@ class Config:
     MONITOR_SYMBOLS = ["510300", "510880", "159941"] 
     INTERVAL_SECONDS = 300  # 5分钟轮询一次
     K_LINE_PERIOD = 5       # 使用5分钟K线
+
+    # 推送配置 (选填)
+    FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/xxx" 
+    BARK_KEY = "AwWTF8XzyNxsw7ULFek6jM" 
+    
+    # 触发阈值：买入/卖出概率超过多少时推送
+    PUSH_THRESHOLD = 70

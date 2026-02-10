@@ -42,6 +42,9 @@ def analysis_node(state: AgentState):
     4. 警示：如果 RSI > 80 或 < 20，提醒日内超买/超卖风险。
 
     请简短、专业地回答。
+    
+    注意：请在回答的最后，务必按照以下格式输出一行 JSON 总结（不要包含在代码块内）：
+    SIGNAL_JSON: {{"symbol": "{state['symbol']}", "action": "买入/卖出/观望", "probability": 概率数值}}
     """
     response = llm.invoke(prompt)
     return {"analysis": response.content}

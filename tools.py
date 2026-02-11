@@ -4,86 +4,80 @@ import pandas_ta as ta
 import os
 import re
 import json
+from datetime import datetime
 
-# 强力禁用代理
+# 强力直连，禁用代理
 os.environ['no_proxy'] = '*'
 
-def fetch_etf_metrics_5min(symbol: str):
-    """
-    通过新浪财经接口获取 5 分钟 K 线数据
-    symbol: 510300, 513100 等
-    """
-    try:
-        # 1. 自动转换代码格式 (新浪格式: sh510300, sz159941)
-        market = "sh" if symbol.startswith("5") else "sz"
-        full_symbol = f"{market}{symbol}"
-        
-        # 新浪 5 分钟 K 线接口
-        # scale=5 表示 5 分钟, datalen=100 表示取 100 条
-        url = f"https://quotes.sina.cn/cn/api/jsonp.php/var_{full_symbol}_5/CN_MarketDataService.getKLineData?symbol={full_symbol}&scale=5&ma=no&datalen=100"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+class SinaFinanceAPI:
+    def __init__(self):
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             'Referer': 'http://finance.sina.com.cn/'
         }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        text = response.text
-        
-        # 2. 解析新浪特有的 JSONP 格式
-        # 新浪返回的是 var_sh510300_5_xxx=[{...},{...}]; 这种字符串
-        # 我们需要用正则提取中括号里的内容
-        match = re.search(r'\[.*\]', text)
-        if not match:
-            raise ValueError(f"新浪接口返回格式错误或无数据: {text[:100]}")
-            
-        data_json = match.group()
-        raw_data = json.loads(data_json)
-        
-        # 3. 转化为 DataFrame
-        # 新浪列名: day (时间), open, high, low, close, volume
-        df = pd.DataFrame(raw_data)
-        
-        # 转换数值类型
-        for col in ['open', 'high', 'low', 'close', 'volume']:
-            df[col] = pd.to_numeric(df[col])
 
-        # 4. 计算指标 (正序)
-        df['RSI'] = ta.rsi(df['close'], length=14)
-        macd = ta.macd(df['close'])
-        df = pd.concat([df, macd], axis=1)
+    def get_kline(self, symbol, scale=5, datalen=100):
+        """
+        获取K线数据
+        scale: 分钟数 (5, 15, 30, 60); 240代表日线
+        datalen: 获取多少根K线
+        """
+        market = "sh" if symbol.startswith(("5", "6", "000300")) else "sz"
+        full_symbol = f"{market}{symbol}"
+        url = f"https://quotes.sina.cn/cn/api/jsonp.php/var_{full_symbol}_{scale}/CN_MarketDataService.getKLineData?symbol={full_symbol}&scale={scale}&ma=no&datalen={datalen}"
         
-        # 计算量比 (当前5分钟量 / 过去20个5分钟均量)
-        df['vol_ratio'] = df['volume'] / df['volume'].rolling(window=20).mean()
-
-        # 5. 提取当前和上一条
-        curr = df.iloc[-1]
-        prev = df.iloc[-2]
-
-        # 6. 获取名称 (使用腾讯的快照接口获取名称，这个接口很稳)
-        name = symbol
         try:
-            name_url = f"http://qt.gtimg.cn/q={full_symbol}"
-            name_res = requests.get(name_url, timeout=5).text
-            if '~' in name_res:
-                name = name_res.split('~')[1]
-        except:
-            pass
+            res = requests.get(url, headers=self.headers, timeout=10)
+            match = re.search(r'\[.*\]', res.text)
+            if not match: return pd.DataFrame()
+            
+            df = pd.DataFrame(json.loads(match.group()))
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col])
+            return df
+        except Exception as e:
+            print(f"Sina API Error ({symbol}): {e}")
+            return pd.DataFrame()
 
-        return {
-            "name": name,
-            "time": curr['day'],
-            "price": curr['close'],
-            "prev_price": prev['close'],
-            "price_chg_5m": ((curr['close'] - prev['close']) / prev['close']) * 100,
-            "rsi": curr['RSI'],
-            "rsi_prev": prev['RSI'],
-            "macd_hist": curr['MACDh_12_26_9'],
-            "macd_hist_prev": prev['MACDh_12_26_9'],
-            "vol_ratio": curr['vol_ratio'],
-            "is_red": curr['close'] > curr['open']
-        }
+def fetch_etf_enhanced_metrics(symbol: str):
+    api = SinaFinanceAPI()
+    
+    # 1. 获取 5 分钟 K 线 (择时)
+    df_5m = api.get_kline(symbol, scale=5, datalen=100)
+    if df_5m.empty: raise ValueError(f"无法获取 {symbol} 5分钟数据")
+    
+    # 计算 5 分钟指标
+    df_5m['RSI'] = ta.rsi(df_5m['close'], length=14)
+    macd_5 = ta.macd(df_5m['close'])
+    df_5m = pd.concat([df_5m, macd_5], axis=1)
+    df_5m['vol_ratio'] = df_5m['volume'] / df_5m['volume'].rolling(20).mean() # 5min量比
 
-    except Exception as e:
-        print(f"❌ 数据采集报错: {e}")
-        raise e
+    # 2. 获取 日线 K 线 (趋势)
+    df_daily = api.get_kline(symbol, scale=240, datalen=60)
+    df_daily['MA20'] = ta.sma(df_daily['close'], length=20)
+    df_daily['RSI'] = ta.rsi(df_daily['close'], length=14)
+
+    # 3. 获取大盘参考 (沪深300 - 000300)
+    df_market = api.get_kline("000300", scale=5, datalen=2)
+    market_pct = ((df_market['close'].iloc[-1] - df_market['close'].iloc[0]) / df_market['close'].iloc[0]) * 100
+
+    # 提取关键点
+    curr_5m = df_5m.iloc[-1]
+    prev_5m = df_5m.iloc[-2]
+    curr_d = df_daily.iloc[-1]
+
+    return {
+        "name": symbol, # 简单处理
+        "time": curr_5m['day'],
+        # 5min数据
+        "price": curr_5m['close'],
+        "chg_5m": ((curr_5m['close'] - prev_5m['close']) / prev_5m['close']) * 100,
+        "rsi_5m": curr_5m['RSI'],
+        "macd_hist_5m": curr_5m['MACDh_12_26_9'],
+        "vol_ratio_5m": curr_5m['vol_ratio'],
+        # 日线趋势数据
+        "daily_trend": "多头" if curr_d['close'] > curr_d['MA20'] else "空头",
+        "daily_rsi": curr_d['RSI'],
+        # 大盘环境
+        "market_index_pct": market_pct
+    }

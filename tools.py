@@ -6,7 +6,6 @@ import re
 import json
 from datetime import datetime
 
-# 强力直连，禁用代理
 os.environ['no_proxy'] = '*'
 
 class SinaFinanceAPI:
@@ -17,67 +16,71 @@ class SinaFinanceAPI:
         }
 
     def get_kline(self, symbol, scale=5, datalen=100):
-        """
-        获取K线数据
-        scale: 分钟数 (5, 15, 30, 60); 240代表日线
-        datalen: 获取多少根K线
-        """
         market = "sh" if symbol.startswith(("5", "6", "000300")) else "sz"
         full_symbol = f"{market}{symbol}"
         url = f"https://quotes.sina.cn/cn/api/jsonp.php/var_{full_symbol}_{scale}/CN_MarketDataService.getKLineData?symbol={full_symbol}&scale={scale}&ma=no&datalen={datalen}"
-        
         try:
             res = requests.get(url, headers=self.headers, timeout=10)
             match = re.search(r'\[.*\]', res.text)
             if not match: return pd.DataFrame()
-            
             df = pd.DataFrame(json.loads(match.group()))
             for col in ['open', 'high', 'low', 'close', 'volume']:
                 df[col] = pd.to_numeric(df[col])
             return df
-        except Exception as e:
-            print(f"Sina API Error ({symbol}): {e}")
+        except:
             return pd.DataFrame()
 
 def fetch_etf_enhanced_metrics(symbol: str):
     api = SinaFinanceAPI()
-    
-    # 1. 获取 5 分钟 K 线 (择时)
-    df_5m = api.get_kline(symbol, scale=5, datalen=100)
-    if df_5m.empty: raise ValueError(f"无法获取 {symbol} 5分钟数据")
-    
-    # 计算 5 分钟指标
+    # 5分钟线（多取一点用于VWAP重置计算）
+    df_5m = api.get_kline(symbol, scale=5, datalen=240)
+    if df_5m.empty: raise ValueError(f"无法获取数据")
+
+    # VWAP 计算 (每日重置)
+    df_5m['date_only'] = df_5m['day'].str[:10]
+    df_5m['tp'] = (df_5m['high'] + df_5m['low'] + df_5m['close']) / 3
+    df_5m['pv'] = df_5m['tp'] * df_5m['volume']
+    df_5m['cum_pv'] = df_5m.groupby('date_only')['pv'].cumsum()
+    df_5m['cum_vol'] = df_5m.groupby('date_only')['volume'].cumsum()
+    df_5m['vwap'] = df_5m['cum_pv'] / df_5m['cum_vol']
+
+    # 基础指标
     df_5m['RSI'] = ta.rsi(df_5m['close'], length=14)
-    macd_5 = ta.macd(df_5m['close'])
-    df_5m = pd.concat([df_5m, macd_5], axis=1)
-    df_5m['vol_ratio'] = df_5m['volume'] / df_5m['volume'].rolling(20).mean() # 5min量比
+    macd = ta.macd(df_5m['close'])
+    df_5m = pd.concat([df_5m, macd], axis=1)
+    df_5m['macd_slope'] = df_5m['MACDh_12_26_9'].diff()
+    
+    # 布林带
+    bb = ta.bbands(df_5m['close'], length=20, std=2)
+    df_5m = pd.concat([df_5m, bb], axis=1)
+    df_5m['vol_ratio'] = df_5m['volume'] / df_5m['volume'].rolling(20).mean()
 
-    # 2. 获取 日线 K 线 (趋势)
+    # 日线趋势
     df_daily = api.get_kline(symbol, scale=240, datalen=60)
-    df_daily['MA20'] = ta.sma(df_daily['close'], length=20)
-    df_daily['RSI'] = ta.rsi(df_daily['close'], length=14)
+    curr_d = df_daily.iloc[-1] if not df_daily.empty else None
 
-    # 3. 获取大盘参考 (沪深300 - 000300)
+    # 大盘
     df_market = api.get_kline("000300", scale=5, datalen=2)
-    market_pct = ((df_market['close'].iloc[-1] - df_market['close'].iloc[0]) / df_market['close'].iloc[0]) * 100
+    market_pct = ((df_market['close'].iloc[-1] - df_market['close'].iloc[0]) / df_market['close'].iloc[0]) * 100 if not df_market.empty else 0
 
-    # 提取关键点
-    curr_5m = df_5m.iloc[-1]
-    prev_5m = df_5m.iloc[-2]
-    curr_d = df_daily.iloc[-1]
+    curr = df_5m.iloc[-1]
+    prev = df_5m.iloc[-2]
+
+    # 布林带位置
+    if curr['close'] > curr['BBU_20_2.0']: bb_status = "向上突破上轨"
+    elif curr['close'] < curr['BBL_20_2.0']: bb_status = "向下跌破下轨"
+    else: bb_status = "轨道内波动"
 
     return {
-        "name": symbol, # 简单处理
-        "time": curr_5m['day'],
-        # 5min数据
-        "price": curr_5m['close'],
-        "chg_5m": ((curr_5m['close'] - prev_5m['close']) / prev_5m['close']) * 100,
-        "rsi_5m": curr_5m['RSI'],
-        "macd_hist_5m": curr_5m['MACDh_12_26_9'],
-        "vol_ratio_5m": curr_5m['vol_ratio'],
-        # 日线趋势数据
-        "daily_trend": "多头" if curr_d['close'] > curr_d['MA20'] else "空头",
-        "daily_rsi": curr_d['RSI'],
-        # 大盘环境
-        "market_index_pct": market_pct
+        "name": symbol, "time": curr['day'], "price": curr['close'],
+        "chg_5m": ((curr['close'] - prev['close']) / prev['close']) * 100,
+        "rsi_5m": curr['RSI'], "macd_hist_5m": curr['MACDh_12_26_9'],
+        "macd_slope": curr['macd_slope'], "macd_slope_desc": "增强" if curr['macd_slope'] > 0 else "减弱",
+        "vol_ratio_5m": curr['vol_ratio'], "bb_status": bb_status,
+        "bb_upper": curr['BBU_20_2.0'], "bb_lower": curr['BBL_20_2.0'], "bb_mid": curr['BBM_20_2.0'],
+        "vwap": curr['vwap'], "vwap_dist": ((curr['close'] - curr['vwap']) / curr['vwap']) * 100,
+        "vwap_status": "VWAP上方" if curr['close'] > curr['vwap'] else "VWAP下方",
+        "daily_trend": "多头" if (curr_d is not None and curr_d['close'] > ta.sma(df_daily['close'], 20).iloc[-1]) else "空头",
+        "market_index_pct": market_pct,
+        "daily_rsi": curr_d['RSI'] if curr_d is not None else 50
     }

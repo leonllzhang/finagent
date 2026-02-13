@@ -169,7 +169,7 @@ class ETFLab:
                 print(f"分析出错: {e}")
 
         if results:
-            pd.DataFrame(results).to_excel(f"backtest_{symbol}.xlsx", index=False)
+            pd.DataFrame(results).to_excel(f"backtest_{symbol}.xlsx", sheet_name= f"result-{datetime.now}", index=False)
             print(f"✅ 回测报告已保存为 backtest_{symbol}.xlsx")
 
 if __name__ == "__main__":

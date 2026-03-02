@@ -1,32 +1,57 @@
+import json
+import re
 from langchain_openai import ChatOpenAI
 from config_weekly import WeeklyConfig
 
-llm = ChatOpenAI(model=WeeklyConfig.MODEL_NAME, api_key=WeeklyConfig.API_KEY, base_url=WeeklyConfig.BASE_URL)
+llm = ChatOpenAI(
+    model=WeeklyConfig.MODEL_NAME, 
+    api_key=WeeklyConfig.API_KEY, 
+    base_url=WeeklyConfig.BASE_URL,
+    temperature=0.1
+)
+
+def market_sentiment_node(state):
+    """分析新闻，输出全球避险系数"""
+    news_context = state.get('macro_news', "暂无新闻")
+    prompt = f"""
+    # Role: 全球宏观策略研究员
+    请评估当前市场的“避险情绪”。
+    【实时新闻电报】:
+    {news_context}
+    
+    # 输出要求:
+    给出一个【全球避险系数】(0-100分)：
+    - 70-100: 极度恐慌（战争、金融危机），建议避险。
+    必须包含 JSON:
+    MARKET_SENTIMENT: {{"risk_score": 分数, "theme": "核心风险", "safe_sectors": ["军工", "石油", "黄金", "电力"]}}
+    """
+    res = llm.invoke(prompt)
+    try:
+        match = re.search(r'MARKET_SENTIMENT:\s*(\{.*\})', res.content)
+        sentiment_data = json.loads(match.group(1))
+    except:
+        sentiment_data = {"risk_score": 50, "theme": "未知", "safe_sectors": []}
+    return {"sentiment_analysis": sentiment_data}
 
 def weekly_analyze_node(state):
+    """结合技术面和风控评分进行选股"""
     stock = state['current_stock']
+    sentiment = state['sentiment_analysis']
     
-    # 这里建议接入真实新闻 API。如果暂时没有，可以让 AI 根据技术异动推测
     prompt = f"""
-    # Role: 资深策略分析师 (周度选股)
+    # Role: 资管风控总监
+    【宏观风险分】: {sentiment['risk_score']} | 【核心风险】: {sentiment['theme']}
+    【避险资产方向】: {', '.join(sentiment['safe_sectors'])}
     
-    # 任务: 评估股票 {stock['code']} 在下周上涨的确定性。
+    【个股数据 ({stock['code']})】:
+    - 上周涨幅: {stock['weekly_return']:.2f}% | 量能比: {stock['vol_increase']:.2f}
     
-    # 本周表现:
-    - 累计涨幅: {stock['weekly_return']:.2f}%
-    - 成交量放大倍数: {stock['vol_increase']:.2f}
-    - 趋势位置: 处于MA20均线上方，属于{"放量起步" if stock['vol_increase'] > 1.5 else "平稳运行"}。
-    
-    # 请结合以下【行业研报/新闻】模拟逻辑分析：
-    (此处未来可接入真实新闻文本)
+    # 强制逻辑:
+    1. 如果【风险分】> 75，且该股不属于上述避险方向，上涨评分严禁超过 60分。
+    2. 判定该股是否具备抗地缘打击的属性。
 
-    # 深度分析要求：
-    1. 判断这波上涨是【游资短炒】还是【机构趋势建仓】？
-    2. 考虑到 T+1 制度，下周一如果冲高回落，风险大吗？
-    3. 给出下周预测的上涨概率评分 (0-100)。
-
-    必须在回复最后包含 JSON：
-    WEEKLY_RANKING: {{"code": "{stock['code']}", "score": 分数, "reason": "一句话理由"}}
+    必须包含 JSON：
+    WEEKLY_RANKING: {{"code": "{stock['code']}", "score": 分数, "reason": "结合风险的研判理由"}}
     """
     res = llm.invoke(prompt)
     return {"ai_analysis": res.content}
